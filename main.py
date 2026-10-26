@@ -10,11 +10,15 @@ from hyundai_kia_connect_api import ClimateRequestOptions, VehicleManager
 from hyundai_kia_connect_api.exceptions import AuthenticationError
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
+from natural_language import CommandParseError, parse_command
+
 
 PRESETS = {
     "default": {"temperature_f": 72, "duration": 10, "defrost": False},
     "warm": {"temperature_f": 74, "duration": 10, "defrost": True},
     "cool": {"temperature_f": 68, "duration": 10, "defrost": False},
+    "winter": {"temperature_f": 74, "duration": 10, "defrost": True,
+               "rear_defrost": True, "seat_heat": 3},
 }
 REQUIRED_SETTINGS = ("KIA_USERNAME", "KIA_PASSWORD", "KIA_PIN", "SECRET_KEY")
 
@@ -31,17 +35,27 @@ class ServiceConfigurationError(Exception):
     """Required service settings are absent."""
 
 
-def climate_options(payload):
-    """Validate explicit Fahrenheit fields before contacting Kia."""
+def climate_settings(payload):
+    """Resolve defaults and validate the complete climate request."""
     if not isinstance(payload, dict):
         raise InputError("The request body must be a JSON object.")
-    unknown = payload.keys() - {"preset", "temperature_f", "duration", "defrost"}
+    unknown = payload.keys() - {"preset", "temperature_f", "duration", "defrost",
+                                "rear_defrost", "seat_heat", "seat_ventilation"}
     if unknown:
         raise InputError("The climate request contains unsupported fields.")
     preset = payload.get("preset", "default")
     if not isinstance(preset, str) or preset not in PRESETS:
-        raise InputError("Preset must be default, warm, or cool.")
-    values = PRESETS[preset] | {k: v for k, v in payload.items() if k != "preset"}
+        raise InputError("Preset must be default, warm, cool, or winter.")
+    values = {"rear_defrost": False} | PRESETS[preset] | {
+        k: v for k, v in payload.items() if k != "preset"
+    }
+    # A requested seat mode replaces the mode inherited from a preset.
+    if "seat_heat" in payload and "seat_ventilation" in payload:
+        raise InputError("Choose front-seat heating or ventilation, not a combination.")
+    if "seat_ventilation" in payload:
+        values.pop("seat_heat", None)
+    if "seat_heat" in payload:
+        values.pop("seat_ventilation", None)
     temperature = values["temperature_f"]
     if type(temperature) is not int or not 62 <= temperature <= 82:
         raise InputError("temperature_f must be a whole number from 62 to 82.")
@@ -50,11 +64,34 @@ def climate_options(payload):
         raise InputError("duration must be a whole number from 1 to 10 minutes.")
     if type(values["defrost"]) is not bool:
         raise InputError("defrost must be true or false.")
+    if type(values["rear_defrost"]) is not bool:
+        raise InputError("rear_defrost must be true or false.")
+    for field in ("seat_heat", "seat_ventilation"):
+        if field in values and (type(values[field]) is not int or not 0 <= values[field] <= 3):
+            raise InputError(f"{field} must be a whole number from 0 to 3.")
+    return values
+
+
+def climate_options(payload):
+    """Map validated front-seat levels and defrost to U.S. Kia fields."""
+    values = climate_settings(payload)
+    seats = {}
+    if "seat_heat" in values:
+        level = values["seat_heat"]
+        seats = {"front_left_seat": 5 + level if level else 2,
+                 "front_right_seat": 5 + level if level else 2}
+    if "seat_ventilation" in values:
+        level = values["seat_ventilation"]
+        seats = {"front_left_seat": 2 + level if level else 2,
+                 "front_right_seat": 2 + level if level else 2}
     return ClimateRequestOptions(
-        set_temp=temperature,
-        duration=duration,
+        set_temp=values["temperature_f"],
+        duration=values["duration"],
         defrost=values["defrost"],
         climate=True,
+        heating=1 if values["rear_defrost"] else 0,
+        steering_wheel=0,
+        **seats,
     )
 
 
@@ -83,7 +120,7 @@ def create_app(environ=None, manager_factory=VehicleManager):
                     return fn(*args, **kwargs)
             except (BadRequest, UnsupportedMediaType):
                 return jsonify(error="Send a valid JSON object with application/json."), 400
-            except InputError as exc:
+            except (InputError, CommandParseError) as exc:
                 return jsonify(error=str(exc)), 400
             except VehicleSelectionError as exc:
                 return jsonify(error=str(exc)), 409
@@ -152,6 +189,52 @@ def create_app(environ=None, manager_factory=VehicleManager):
             {"id": v.id, "name": v.name, "model": v.model, "year": v.year}
             for v in client.vehicles.values()
         ])
+
+    @app.get("/capabilities")
+    @authenticated
+    def capabilities():
+        return jsonify(
+            vehicle="2026 Kia Carnival Hybrid SX (U.S.)",
+            implemented=["start_climate", "stop_climate", "lock", "unlock",
+                         "front_seat_heat", "front_seat_ventilation", "rear_mirror_defrost"],
+            live_vehicle_verified=False,
+            unavailable={"heated_steering_wheel": "not equipped",
+                         "rear_seat_climate": "not equipped",
+                         "power_sliding_doors": "U.S. command unverified",
+                         "power_liftgate": "U.S. command unverified",
+                         "horn_lights": "U.S. command not implemented"},
+        )
+
+    def interpreted_command():
+        payload = request.get_json()
+        if not isinstance(payload, dict) or set(payload) != {"text"}:
+            raise InputError("Send a JSON object containing only text.")
+        plan = parse_command(payload["text"])
+        if plan["action"] == "start_climate":
+            plan["parameters"] = climate_settings(plan["parameters"])
+        return plan
+
+    @app.post("/parse_command")
+    @authenticated
+    def preview_command():
+        return jsonify(status="preview", interpreted=interpreted_command())
+
+    @app.post("/execute_command")
+    @authenticated
+    def execute_command():
+        plan = interpreted_command()
+        client = get_manager()
+        vehicle_id = selected_vehicle(client)
+        if plan["action"] == "start_climate":
+            result = client.start_climate(vehicle_id, climate_options(plan["parameters"]))
+        else:
+            methods = {"stop_climate": client.stop_climate,
+                       "lock": client.lock, "unlock": client.unlock}
+            result = methods[plan["action"]](vehicle_id)
+        response, status = submitted(plan["action"], result)
+        if status == 202:
+            return jsonify(response.get_json() | {"interpreted": plan}), status
+        return response, status
 
     @app.post("/start_climate")
     @authenticated

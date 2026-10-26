@@ -64,10 +64,64 @@ In the iPhone Shortcuts app:
 - `temperature_f`: an integer from 62 to 82 Fahrenheit.
 - `duration`: an integer from 1 to 10 minutes.
 - `defrost`: a JSON boolean.
+- `rear_defrost`: a JSON boolean for the rear window and heated mirrors together.
+- `seat_heat`: an integer from 0 to 3 for the two front seats, where 0 is off.
+- `seat_ventilation`: an integer from 0 to 3 for the two front seats, where 0 is off.
 
 Explicit fields override the preset. Default uses 72 F for 10 minutes with defrost off. Warm uses 74 F for 10 minutes with defrost on. Cool uses 68 F for 10 minutes with defrost off. These are software defaults, not Andrew's confirmed temperature preferences.
 
 Unknown fields and invalid types are rejected before the app contacts Kia. Temperature changes use the remote-start climate request and may be subject to vehicle state restrictions.
+
+The additional `winter` preset uses 74 F, 10 minutes, front defrost, rear/mirror defrost, and front-seat heat level 3. Explicit fields override it. Explicit seat ventilation replaces a preset's seat heating. Do not specify heating and ventilation together.
+
+Seat heat maps levels 1, 2, and 3 to low, medium, and high heat in the U.S. library. Ventilation uses the corresponding cooling levels. This SX has no heated steering wheel; the service keeps that setting off. Individual seat selection and rear-seat controls are not exposed.
+
+## Natural language commands
+
+`POST /parse_command` previews a command without contacting Kia. `POST /execute_command` parses and validates it, then submits one command. They use the same Authorization header as the existing routes. Send a JSON object with only a `text` field:
+
+```json
+{"text":"start my car at 80 degrees with seat warmers at 3 and rear defrost on"}
+```
+
+The example resolves to:
+
+```json
+{
+  "action": "start_climate",
+  "parameters": {
+    "temperature_f": 80,
+    "duration": 10,
+    "defrost": false,
+    "rear_defrost": true,
+    "seat_heat": 3
+  }
+}
+```
+
+This requests high heat on the two front seats, rear-window and mirror defrost, and no steering-wheel heat. Front windshield defrost stays off unless requested.
+
+Additional examples:
+
+- "Please start my Kia Carnival at eighty degrees with seat warmers at three and rear defrost on."
+- "Cool down my car with seat ventilation at 2."
+- "Warm up my car with front defrost off."
+- "Prepare my car for winter."
+- "Start my car at 72 degrees for five minutes."
+- "Lock my car," "unlock my car," or "stop my car climate."
+
+This is a constrained natural language parser. It accepts the documented action and setting phrases, including spoken numbers and different setting orders. It rejects unrecognized words, conditions, schedules, conflicting settings, and multiple actions rather than dropping part of a request. It does not call a language model or require a model API key. A command can contain at most 400 characters.
+
+For the first Siri integration, create a shortcut named **Car command**:
+
+1. Add **Ask for Input**, select **Text**, and set its prompt to "What should the car do?"
+2. Pass that input as `text` to `POST /parse_command` and show the returned `interpreted` action and parameters with **Show Result**. Test this preview before using the execution step.
+3. To submit a command, send the original input to `POST /execute_command` instead. Read and speak its `message` field. If the response contains an `error`, speak it and stop.
+4. Say "Hey Siri, Car command," then answer its prompt with the full instruction.
+
+Launching the shortcut and supplying its instruction are separate parts of this initial Siri flow. Do not assume that Siri passes an arbitrary spoken suffix after the shortcut name. A single uninterrupted Siri phrase needs a later iOS integration. No signed Shortcut file has been generated or installed.
+
+`GET /capabilities` lists this bridge's implemented controls and the known hardware constraints. It is not a live Kia feature-discovery response. Sliding-door and liftgate requests remain unverified and unavailable; see [the investigation](docs/doors-and-liftgate.md).
 
 ## Submission and completion
 
