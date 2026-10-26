@@ -12,9 +12,15 @@ The 2026 Carnival Hybrid has physical power-door controls, but a working U.S. Ki
 - Kia's [2026 Carnival Hybrid power liftgate guide](https://www.kiaffg.com/2026/carnivalhev/power-liftgate) documents the physical buttons and smart key.
 - Public source and documentation searches did not establish a working U.S. cloud endpoint. This does not prove that none exists.
 
+## Owner portal inspection, 2026-10-26
+
+Andrew signed into the U.S. owner portal. Read-only inspection of the enrolled vehicle's dashboard and Vehicle Status panel showed cached door and trunk open/closed indicators. No sliding-door or liftgate open/close controls were visible in the inspected views. The displayed status timestamp was from the previous day; it was not a live observation of the vehicle.
+
+This does not establish whether the Kia Access mobile app has additional controls or whether an undocumented endpoint exists. Andrew was actively driving, so no status refresh, remote vehicle command, or actuation test was performed.
+
 ## Next verification step
 
-Inspect the controls actually offered for Andrew's enrolled vehicle in the U.S. Kia Access app or owner portal. If a control exists, inspect its normal authenticated request, add the corresponding U.S. implementation, and test with the vehicle parked and the opening in view. Account access and live vehicle testing have not occurred in this project.
+When parked, inspect the controls offered in the U.S. Kia Access mobile app for this vehicle. If a control exists, inspect its normal authenticated request, add the corresponding U.S. implementation, and test with the opening in view. Deployment and live command testing remain pending.
 
 Do not substitute generic unlock for opening a sliding door, copy an overseas endpoint into the U.S. client, or report success from a guessed URL. The Siri integration and parser can route these actions once a working control is established.
 
