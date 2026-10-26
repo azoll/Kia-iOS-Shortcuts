@@ -29,7 +29,7 @@ for attempt in range(30):
         status, data = request("/", authenticated=False)
         assert status == 200 and data["status"] == "ok"
         break
-    except (URLError, TimeoutError):
+    except (URLError, ConnectionError, TimeoutError):
         if attempt == 29:
             raise
         time.sleep(0.5)
