@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!main.py
+!natural_language.py
+!gunicorn.conf.py

@@ -14,3 +14,18 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt pytest==9.1.1
       - run: python -m pytest -q
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: docker build -t kia-bridge:test .
+      - name: Check the container without Kia credentials
+        env:
+          SECRET_KEY: container-test-token-with-no-kia-access-12345
+        run: |
+          trap 'docker logs kia-bridge-test; docker rm -f kia-bridge-test' EXIT
+          docker run --detach --name kia-bridge-test -p 127.0.0.1:8091:8091 -e PORT=8091 -e SECRET_KEY kia-bridge:test
+          python scripts/smoke-http.py http://127.0.0.1:8091

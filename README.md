@@ -6,7 +6,7 @@ Use Siri Shortcuts to request remote start/climate, temperature presets, locks, 
 
 ## Current status
 
-The first change provides a local API and tests. Deployment, Kia account enrollment, vehicle testing, and signed iOS Shortcut imports are separate steps. An active Kia Connect plan with the relevant remote features is required.
+The bridge provides a local API, tests, and a [Cloud Run deployment guide](docs/cloud-run.md). Cloud deployment, service credentials, vehicle testing, and signed iOS Shortcut imports remain pending. An active Kia Connect plan with the relevant remote features is required.
 
 ## Run locally
 
