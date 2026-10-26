@@ -155,6 +155,7 @@ def test_capabilities_distinguishes_hardware_from_unverified_commands(bridge):
     response = client.get("/capabilities", headers=HEADERS)
     assert response.json["live_vehicle_verified"] is False
     assert response.json["unavailable"]["heated_steering_wheel"] == "not equipped"
+    assert response.json["unavailable"]["rear_seat_heat"] == "not equipped"
     assert response.json["unavailable"]["power_liftgate"] == "U.S. command unverified"
     factory.assert_not_called()
 
@@ -178,3 +179,67 @@ def test_front_seat_level_mapping(field, level, code):
 def test_structured_accessory_validation(payload):
     with pytest.raises(InputError):
         climate_options(payload)
+
+
+@pytest.mark.parametrize("text,driver,passenger", [
+    ("start my car with driver seat warmer at three and passenger seat ventilation at two", 8, 4),
+    ("start my car with driver's seat heater on low", 6, 2),
+    ("start my car with passenger seat cooling at 3", 2, 5),
+    ("prepare my car for winter with passenger seat off", 8, 2),
+    ("prepare my car for winter with driver seat ventilation at 2", 4, 8),
+    ("start my car with seat heaters at 3 and passenger seat warmer at 1", 8, 6),
+    ("start my car with passenger seat ventilation at 1 and seat heaters at 2", 7, 3),
+])
+def test_individual_seat_commands_resolve_preview_and_execution(bridge, text, driver, passenger):
+    client, manager, factory = bridge
+    preview = client.post("/parse_command", headers=HEADERS, json={"text": text})
+    assert preview.status_code == 200, preview.json
+    factory.assert_not_called()
+    params = preview.json["interpreted"]["parameters"]
+    assert any(k.startswith("driver_seat_") for k in params)
+    assert any(k.startswith("passenger_seat_") for k in params)
+    response = client.post("/execute_command", headers=HEADERS, json={"text": text})
+    assert response.status_code == 202, response.json
+    manager.start_climate.assert_called_once()
+    options = manager.start_climate.call_args.args[1]
+    assert (options.front_left_seat, options.front_right_seat) == (driver, passenger)
+    assert response.json["interpreted"] == preview.json["interpreted"]
+
+
+def test_individual_seat_us_wire_payload():
+    options = climate_options({"driver_seat_heat": 3, "passenger_seat_ventilation": 2})
+    api = KiaUvoApiUSA.__new__(KiaUvoApiUSA)
+    api.API_URL = "https://example.invalid/apigw/v1/"
+    api.post_request_with_logging_and_active_session = Mock(
+        return_value=SimpleNamespace(headers={"Xid": "test-id"}))
+    api.start_climate(None, SimpleNamespace(), options)
+    seats = api.post_request_with_logging_and_active_session.call_args.kwargs["json_body"]["remoteClimate"]["heatVentSeat"]
+    assert seats["driverSeat"] == {"heatVentType": 1, "heatVentLevel": 4, "heatVentStep": 1}
+    assert seats["passengerSeat"] == {"heatVentType": 2, "heatVentLevel": 3, "heatVentStep": 2}
+
+
+@pytest.mark.parametrize("text", [
+    "start my car with driver seat heat at 1 and driver seat ventilation at 2",
+    "start my car with passenger seat heat off and passenger seat ventilation at 1",
+    "start my car with driver seat heat at 1 and driver's seat heater at 2",
+    "start my car with driver seat warmer at 4",
+    "start my car with passenger seat ventilation at 3.5",
+    "start my car with driver seat heat at 2 and rear seat heat at 1",
+])
+def test_invalid_individual_seat_commands_never_contact_kia(bridge, text):
+    client, _, factory = bridge
+    response = client.post("/execute_command", headers=HEADERS, json={"text": text})
+    assert response.status_code == 400, response.json
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize("payload", [
+    {"driver_seat_heat": True}, {"driver_seat_heat": -1},
+    {"passenger_seat_ventilation": "2"}, {"passenger_seat_ventilation": 4},
+    {"driver_seat_heat": 1, "driver_seat_ventilation": 0},
+    {"passenger_seat_heat": 0, "passenger_seat_ventilation": 2},
+])
+def test_individual_structured_validation_rejects_before_kia(bridge, payload):
+    client, _, factory = bridge
+    assert client.post("/start_climate", headers=HEADERS, json=payload).status_code == 400
+    factory.assert_not_called()

@@ -29,7 +29,13 @@ SEAT_HEAT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat warmers?|seat heaters?|he
 SEAT_VENT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat ventilation|ventilated seats?|seat cooling|seat coolers?)"
 REAR = r"(?:rear|back)(?:\s+(?:window|windshield))?\s+(?:defrost|defroster|defogger)"
 FRONT = r"(?:front(?:\s+windshield)?|windshield)\s+(?:defrost|defroster|defogger)"
-CLAUSES = [
+CLAUSES = []
+for seat in ("driver", "passenger"):
+    for mode, pattern in (("seat_heat", SEAT_HEAT), ("seat_ventilation", SEAT_VENT)):
+        CLAUSES.append((rf"{seat}(?:'s)?\s+{pattern}(?:\s+(?:at|to|on))?(?:\s+level)?\s+{LEVEL}\b",
+                        f"{seat}_{mode}", "level"))
+    CLAUSES.append((rf"{seat}(?:'s)?\s+seat\s+(?P<value>off)\b", f"{seat}_seat_heat", "level"))
+CLAUSES += [
     (rf"{SEAT_HEAT}(?:\s+(?:at|to|on))?(?:\s+level)?\s+{LEVEL}\b", "seat_heat", "level"),
     (rf"{SEAT_VENT}(?:\s+(?:at|to|on))?(?:\s+level)?\s+{LEVEL}\b", "seat_ventilation", "level"),
     (rf"(?:turn\s+)?(?P<value>on|off)\s+(?:the\s+)?{REAR}\b", "rear_defrost", "bool"),

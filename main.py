@@ -21,6 +21,8 @@ PRESETS = {
                "rear_defrost": True, "seat_heat": 3},
 }
 REQUIRED_SETTINGS = ("KIA_USERNAME", "KIA_PASSWORD", "KIA_PIN", "SECRET_KEY")
+SEAT_FIELDS = tuple(prefix + mode for prefix in ("", "driver_", "passenger_")
+                    for mode in ("seat_heat", "seat_ventilation"))
 
 
 class InputError(Exception):
@@ -39,8 +41,8 @@ def climate_settings(payload):
     """Resolve defaults and validate the complete climate request."""
     if not isinstance(payload, dict):
         raise InputError("The request body must be a JSON object.")
-    unknown = payload.keys() - {"preset", "temperature_f", "duration", "defrost",
-                                "rear_defrost", "seat_heat", "seat_ventilation"}
+    unknown = payload.keys() - ({"preset", "temperature_f", "duration", "defrost",
+                                 "rear_defrost"} | set(SEAT_FIELDS))
     if unknown:
         raise InputError("The climate request contains unsupported fields.")
     preset = payload.get("preset", "default")
@@ -66,9 +68,22 @@ def climate_settings(payload):
         raise InputError("defrost must be true or false.")
     if type(values["rear_defrost"]) is not bool:
         raise InputError("rear_defrost must be true or false.")
-    for field in ("seat_heat", "seat_ventilation"):
+    for field in SEAT_FIELDS:
         if field in values and (type(values[field]) is not int or not 0 <= values[field] <= 3):
             raise InputError(f"{field} must be a whole number from 0 to 3.")
+    if any(field in payload for field in SEAT_FIELDS if field.startswith(("driver_", "passenger_"))):
+        # The U.S. adapter sends every seat when any seat is requested. Resolve
+        # the other front seat to off unless a shared setting/preset supplies it.
+        shared_mode = "seat_ventilation" if "seat_ventilation" in values else "seat_heat"
+        shared_level = values.get(shared_mode, 0)
+        for seat in ("driver", "passenger"):
+            heat, vent = f"{seat}_seat_heat", f"{seat}_seat_ventilation"
+            if heat in payload and vent in payload:
+                raise InputError(f"Choose heating or ventilation for the {seat} seat.")
+            if heat not in payload and vent not in payload:
+                values[f"{seat}_{shared_mode}"] = shared_level
+        values.pop("seat_heat", None)
+        values.pop("seat_ventilation", None)
     return values
 
 
@@ -76,14 +91,12 @@ def climate_options(payload):
     """Map validated front-seat levels and defrost to U.S. Kia fields."""
     values = climate_settings(payload)
     seats = {}
-    if "seat_heat" in values:
-        level = values["seat_heat"]
-        seats = {"front_left_seat": 5 + level if level else 2,
-                 "front_right_seat": 5 + level if level else 2}
-    if "seat_ventilation" in values:
-        level = values["seat_ventilation"]
-        seats = {"front_left_seat": 2 + level if level else 2,
-                 "front_right_seat": 2 + level if level else 2}
+    for seat, option in (("driver", "front_left_seat"), ("passenger", "front_right_seat")):
+        for mode, offset in (("seat_heat", 5), ("seat_ventilation", 2)):
+            field = f"{seat}_{mode}" if f"{seat}_{mode}" in values else mode
+            if field in values:
+                level = values[field]
+                seats[option] = offset + level if level else 2
     return ClimateRequestOptions(
         set_temp=values["temperature_f"],
         duration=values["duration"],
@@ -196,10 +209,11 @@ def create_app(environ=None, manager_factory=VehicleManager):
         return jsonify(
             vehicle="2026 Kia Carnival Hybrid SX (U.S.)",
             implemented=["start_climate", "stop_climate", "lock", "unlock",
-                         "front_seat_heat", "front_seat_ventilation", "rear_mirror_defrost"],
+                         "front_seat_heat", "front_seat_ventilation", "rear_mirror_defrost",
+                         "individual_front_seat_settings"],
             live_vehicle_verified=False,
             unavailable={"heated_steering_wheel": "not equipped",
-                         "rear_seat_climate": "not equipped",
+                         "rear_seat_heat": "not equipped",
                          "power_sliding_doors": "U.S. command unverified",
                          "power_liftgate": "U.S. command unverified",
                          "horn_lights": "U.S. command not implemented"},

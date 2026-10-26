@@ -14,7 +14,10 @@ The SX has heated and ventilated front seats and heated mirrors. Andrew confirme
 
 - The example sentence produces an 80 F climate request, front-seat heat level 3, and rear/mirror defrost enabled.
 - Seat levels 1, 2, and 3 map to the U.S. library's low, medium, and high values. Level 0 turns the front-seat controls off.
-- Front-seat heating and ventilation cannot be requested together.
+- A given seat cannot explicitly request heating and ventilation together.
+- Driver and passenger heating/ventilation can be configured separately using `driver_seat_heat`, `driver_seat_ventilation`, `passenger_seat_heat`, and `passenger_seat_ventilation` (levels 0 through 3). Individual settings override shared settings or presets for that seat. A different mode may be used on each seat.
+- With individual settings, preview resolves each front seat explicitly. An otherwise unspecified front seat defaults to off: the pinned U.S. adapter sends all seat fields when any seat is configured and does not preserve omitted seats.
+- Natural language supports phrases such as "driver seat warmer at 3 and passenger seat ventilation at 2" and "passenger seat off". Duplicate fields and opposing explicit modes for the same seat are rejected before Kia initialization.
 - A preview parses and validates the complete command without initializing the Kia client.
 - Execution submits exactly one supported command after validation.
 - Unknown words, conflicting settings, malformed input, unsupported hardware, and unverified door/liftgate commands cause no Kia client call.
@@ -28,3 +31,5 @@ The initial Shortcut uses Ask for Input to collect the full instruction after Si
 ## Vehicle verification
 
 Local tests and source inspection do not establish that the Carnival accepts a cloud command. Live Kia account enrollment, credentials, and vehicle testing remain separate work. Door and liftgate controls must remain unavailable until a U.S. command is verified.
+
+Andrew's supplied app screenshots show temperature, duration up to 10 minutes in 1-minute increments, a separate front Defrost toggle, Rear Defrost & Accessories, and individual driver/passenger heated or ventilated seat selection. The screenshot shows the driver seat set to LOW and the passenger seat off. This confirms visible app settings, not execution through this bridge.

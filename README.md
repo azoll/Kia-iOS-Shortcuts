@@ -60,21 +60,25 @@ In the iPhone Shortcuts app:
 
 `POST /start_climate` accepts:
 
-- `preset`: default, warm, or cool.
+- `preset`: default, warm, cool, or winter.
 - `temperature_f`: an integer from 62 to 82 Fahrenheit.
 - `duration`: an integer from 1 to 10 minutes.
 - `defrost`: a JSON boolean.
 - `rear_defrost`: a JSON boolean for the rear window and heated mirrors together.
 - `seat_heat`: an integer from 0 to 3 for the two front seats, where 0 is off.
 - `seat_ventilation`: an integer from 0 to 3 for the two front seats, where 0 is off.
+- `driver_seat_heat`, `passenger_seat_heat`: individual front-seat heat levels from 0 to 3.
+- `driver_seat_ventilation`, `passenger_seat_ventilation`: individual front-seat ventilation levels from 0 to 3.
 
 Explicit fields override the preset. Default uses 72 F for 10 minutes with defrost off. Warm uses 74 F for 10 minutes with defrost on. Cool uses 68 F for 10 minutes with defrost off. These are software defaults, not Andrew's confirmed temperature preferences.
 
 Unknown fields and invalid types are rejected before the app contacts Kia. Temperature changes use the remote-start climate request and may be subject to vehicle state restrictions.
 
-The additional `winter` preset uses 74 F, 10 minutes, front defrost, rear/mirror defrost, and front-seat heat level 3. Explicit fields override it. Explicit seat ventilation replaces a preset's seat heating. Do not specify heating and ventilation together.
+The additional `winter` preset uses 74 F, 10 minutes, front defrost, rear/mirror defrost, and front-seat heat level 3. Explicit fields override it. Shared seat ventilation replaces a preset's shared seat heating. Do not explicitly specify heating and ventilation for the same seat, or shared heating and ventilation together.
 
-Seat heat maps levels 1, 2, and 3 to low, medium, and high heat in the U.S. library. Ventilation uses the corresponding cooling levels. This SX has no heated steering wheel; the service keeps that setting off. Individual seat selection and rear-seat controls are not exposed.
+Individual seat settings override shared fields and presets for that seat, regardless of field order. Different modes may be used for driver and passenger. For example, `{"preset":"winter","passenger_seat_heat":0}` keeps the driver on high and turns the passenger seat off. If individual settings have no shared setting or preset to supply the other seat, it defaults to off. Preview includes each seat's resolved setting. The pinned U.S. adapter sends all seats when any seat is configured, so omitted seats cannot be assumed to retain their prior setting.
+
+Seat heat maps levels 1, 2, and 3 to low, medium, and high heat in the U.S. library. Ventilation uses the corresponding cooling levels. This SX has no heated steering wheel; the service keeps that setting off. Rear-seat controls are not exposed.
 
 ## Natural language commands
 
@@ -105,6 +109,8 @@ Additional examples:
 
 - "Please start my Kia Carnival at eighty degrees with seat warmers at three and rear defrost on."
 - "Cool down my car with seat ventilation at 2."
+- "Start my car at 80 degrees with driver seat warmer at 3 and passenger seat ventilation at 2."
+- "Prepare my car for winter with passenger seat off."
 - "Warm up my car with front defrost off."
 - "Prepare my car for winter."
 - "Start my car at 72 degrees for five minutes."
