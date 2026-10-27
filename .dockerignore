@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!requirements.txt
+!main.py
+!natural_language.py
+!kia_session.py
+!gunicorn.conf.py

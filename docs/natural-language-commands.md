@@ -1,0 +1,40 @@
+# Natural language climate commands
+
+## Goal
+
+Andrew wants to speak a complete request such as "start my car at 80 degrees with seat warmers at 3 and rear defrost on" and have the service submit the corresponding command to his 2026 Kia Carnival Hybrid SX.
+
+## Scope
+
+Extend the current Flask bridge with front-seat heating and ventilation, rear-window and mirror defrost, and a winter preset. Add a deterministic natural language parser with preview and execution endpoints. Retain the existing structured command routes. A constrained parser avoids a new model dependency for a small command set and rejects text it cannot interpret completely.
+
+The SX has heated and ventilated front seats and heated mirrors. Andrew confirmed that his vehicle does not have a heated steering wheel. Do not enable steering-wheel heat or expose rear-seat heater settings.
+
+## Acceptance criteria
+
+- Andrew's phrase set includes a leading "tell Sirius to", default start/stop/lock/unlock, "turn the car on/off", and trailing warm/cool modifiers. Warm means 80 F, 10 minutes, shared front-seat heat 3, front defrost and rear/mirror defrost on. Cool means 67 F, 10 minutes, shared front-seat ventilation 2, and defrost off. Explicit settings still override presets.
+- Andrew selected "cool my seat down" to mean remote climate at 67 F for 10 minutes, driver ventilation 2, passenger seat conditioning off, and defrost off. This is a remote-climate start request, not an independent seat-only API operation.
+- Dictation normalization is bounded: accept Serious as a vehicle-name transcription, de frost as defrost, and to/too as two only in a seat-level slot. Preserve negation, temperatures, units, and lock/unlock distinctions. Unknown text still causes no command. Parser errors include a message field so the existing spoken-response Shortcut can read them.
+- Short instructions such as "unlock", "lock", "turn on", and "turn off" target the already selected vehicle. "Sirius" is a vehicle alias, and a leading "tell Sirius to" (optionally preceded by "Siri,") can be parsed when supplied as text. This does not change Siri's ability to forward an invocation's suffix into a personal Shortcut.
+- "Turn on at 80 degrees with defrost and seat warmers at 2" requests 80 F, front windshield defrost, and front-seat heat level 2. Bare "rear defrost" enables rear/mirror defrost separately. Explicit on/off settings take precedence in matching; duplicate or conflicting clauses are rejected.
+- The example sentence produces an 80 F climate request, front-seat heat level 3, and rear/mirror defrost enabled.
+- Seat levels 1, 2, and 3 map to the U.S. library's low, medium, and high values. Level 0 turns the front-seat controls off.
+- A given seat cannot explicitly request heating and ventilation together.
+- Driver and passenger heating/ventilation can be configured separately using `driver_seat_heat`, `driver_seat_ventilation`, `passenger_seat_heat`, and `passenger_seat_ventilation` (levels 0 through 3). Individual settings override shared settings or presets for that seat. A different mode may be used on each seat.
+- With individual settings, preview resolves each front seat explicitly. An otherwise unspecified front seat defaults to off: the pinned U.S. adapter sends all seat fields when any seat is configured and does not preserve omitted seats.
+- Natural language supports phrases such as "driver seat warmer at 3 and passenger seat ventilation at 2" and "passenger seat off". Duplicate fields and opposing explicit modes for the same seat are rejected before Kia initialization.
+- A preview parses and validates the complete command without initializing the Kia client.
+- Execution submits exactly one supported command after validation.
+- Unknown words, conflicting settings, malformed input, unsupported hardware, and unverified door/liftgate commands cause no Kia client call.
+- Lock, unlock, climate stop, presets, spoken numbers, temperature, duration, and defrost variations have focused tests.
+- The example is checked against the actual U.S. library's generated request body with the network transport replaced by a test double.
+
+## Siri input
+
+The initial Shortcut uses Ask for Input to collect the full instruction after Siri launches the named shortcut. Do not claim that an arbitrary suffix after a shortcut's name is passed automatically. A single uninterrupted Siri utterance is a later iOS integration task.
+
+## Vehicle verification
+
+Local tests and source inspection do not establish that the Carnival accepts a cloud command. Live Kia account enrollment, credentials, and vehicle testing remain separate work. Door and liftgate controls must remain unavailable until a U.S. command is verified.
+
+Andrew's supplied app screenshots show temperature, duration up to 10 minutes in 1-minute increments, a separate front Defrost toggle, Rear Defrost & Accessories, and individual driver/passenger heated or ventilated seat selection. The screenshot shows the driver seat set to LOW and the passenger seat off. This confirms visible app settings, not execution through this bridge.
