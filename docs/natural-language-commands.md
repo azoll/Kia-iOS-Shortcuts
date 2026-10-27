@@ -12,6 +12,9 @@ The SX has heated and ventilated front seats and heated mirrors. Andrew confirme
 
 ## Acceptance criteria
 
+- Andrew's phrase set includes a leading "tell Sirius to", default start/stop/lock/unlock, "turn the car on/off", and trailing warm/cool modifiers. Warm means 80 F, 10 minutes, shared front-seat heat 3, front defrost and rear/mirror defrost on. Cool means 67 F, 10 minutes, shared front-seat ventilation 2, and defrost off. Explicit settings still override presets.
+- Andrew selected "cool my seat down" to mean remote climate at 67 F for 10 minutes, driver ventilation 2, passenger seat conditioning off, and defrost off. This is a remote-climate start request, not an independent seat-only API operation.
+- Dictation normalization is bounded: accept Serious as a vehicle-name transcription, de frost as defrost, and to/too as two only in a seat-level slot. Preserve negation, temperatures, units, and lock/unlock distinctions. Unknown text still causes no command. Parser errors include a message field so the existing spoken-response Shortcut can read them.
 - Short instructions such as "unlock", "lock", "turn on", and "turn off" target the already selected vehicle. "Sirius" is a vehicle alias, and a leading "tell Sirius to" (optionally preceded by "Siri,") can be parsed when supplied as text. This does not change Siri's ability to forward an invocation's suffix into a personal Shortcut.
 - "Turn on at 80 degrees with defrost and seat warmers at 2" requests 80 F, front windshield defrost, and front-seat heat level 2. Bare "rear defrost" enables rear/mirror defrost separately. Explicit on/off settings take precedence in matching; duplicate or conflicting clauses are rejected.
 - The example sentence produces an 80 F climate request, front-seat heat level 3, and rear/mirror defrost enabled.

@@ -7,15 +7,19 @@ class CommandParseError(Exception):
     """The instruction cannot be fully interpreted as one supported command."""
 
 
-CAR = r"(?:(?:my|the)\s+)?(?:kia\s+carnival|kia|carnival|car|van|sirius)"
+CAR = r"(?:(?:my|the)\s+)?(?:kia\s+carnival|kia|carnival|car|van|sirius|serious)"
 ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
-LEVELS = {"off": 0, "low": 1, "medium": 2, "high": 3}
-LEVEL = r"(?P<value>\d+|off|low|medium|high)"
+LEVELS = {"off": 0, "low": 1, "medium": 2, "high": 3, "to": 2, "too": 2}
+LEVEL = r"(?P<value>\d+|off|low|medium|high|to|too)"
 
 # The first matching action must begin the instruction. Nothing is executed here.
 ACTIONS = [
     (rf"(?:prepare|warm up)\s+{CAR}\s+for winter\b", "start_climate", {"preset": "winter"}),
+    (r"cool my seat down\b", "start_climate", {"preset": "cool",
+        "driver_seat_ventilation": 2, "passenger_seat_ventilation": 0}),
+    (rf"turn\s+{CAR}\s+on\b", "start_climate", {}),
+    (rf"turn\s+{CAR}\s+off\b", "stop_climate", {}),
     (rf"(?:remote start|start|turn on)(?:\s+{CAR})?(?:\s+climate)?\b", "start_climate", {}),
     (rf"(?:warm up|warm|heat|preheat)(?:\s+{CAR})?\b", "start_climate", {"preset": "warm"}),
     (rf"(?:cool down|cool|precool)(?:\s+{CAR})?\b", "start_climate", {"preset": "cool"}),
@@ -26,9 +30,10 @@ ACTIONS = [
 ]
 
 SEAT_HEAT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat warmers?|seat heaters?|heated seats?|seat heat)"
-SEAT_VENT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat ventilation|ventilated seats?|seat cooling|seat coolers?)"
-REAR = r"(?:rear|back)(?:\s+(?:window|windshield))?\s+(?:defrost|defroster|defogger)"
-FRONT = r"(?:(?:front(?:\s+windshield)?|windshield)\s+)?(?:defrost|defroster|defogger)"
+SEAT_VENT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat ventilation|seat vents?|ventilated seats?|seat cooling|seat coolers?)"
+DEFROST = r"(?:defrost|defroster|defogger|de\s+frost)"
+REAR = rf"(?:rear|back)(?:\s+(?:window|windshield))?\s+{DEFROST}"
+FRONT = rf"(?:(?:front(?:\s+windshield)?|windshield)\s+)?{DEFROST}"
 CLAUSES = []
 for seat in ("driver", "passenger"):
     for mode, pattern in (("seat_heat", SEAT_HEAT), ("seat_ventilation", SEAT_VENT)):
@@ -48,6 +53,7 @@ CLAUSES += [
     (r"(?:(?:at|to|temperature(?:\s+(?:at|to))?)\s+)?(?P<value>\d+)\s*(?:degrees?(?:\s+fahrenheit)?|°\s*f?|fahrenheit|f)\b", "temperature_f", "int"),
     (r"(?:at|to|temperature(?:\s+(?:at|to))?)\s+(?P<value>\d+)\b", "temperature_f", "int"),
     (r"(?:using\s+)?(?P<value>default|warm|cool|winter)\s+preset\b", "preset", "str"),
+    (r"(?P<value>warm|cool)\b", "preset", "str"),
 ]
 
 
@@ -61,7 +67,7 @@ def normalize(text):
     text = re.sub(r"\b(" + "|".join(ONES) + r")\b", lambda m: str(ONES[m[0]]), text)
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"^please\s+", "", text)
-    text = re.sub(r"^(?:(?:hey\s+)?siri[:,]?\s+)?tell\s+sirius\s+to\s+", "", text)
+    text = re.sub(r"^(?:(?:hey\s+)?siri[:,]?\s+)?tell\s+(?:sirius|serious),?\s+to\s+", "", text)
     return re.sub(r"^please\s+", "", text).rstrip(".! ")
 
 

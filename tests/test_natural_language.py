@@ -70,6 +70,91 @@ def test_sirius_sentence_submits_validated_climate_settings_once(bridge):
     manager.stop_climate.assert_not_called()
 
 
+@pytest.mark.parametrize('text,action,settings', [
+    ('Tell Sirius to start the car 80 degrees with the seat warmers on two and rear defrost and defrost on.',
+     'start_climate', {'temperature_f': 80, 'seat_heat': 2, 'rear_defrost': True, 'defrost': True}),
+    ('Start the car.', 'start_climate', {'temperature_f': 72, 'duration': 10}),
+    ('Stop the car.', 'stop_climate', {}),
+    ('Lock.', 'lock', {}),
+    ('Unlock.', 'unlock', {}),
+    ('Start the car warm.', 'start_climate', {'temperature_f': 80, 'seat_heat': 3,
+                                           'defrost': True, 'rear_defrost': True, 'duration': 10}),
+    ('Turn the car on.', 'start_climate', {'temperature_f': 72}),
+    ('Turn the car off.', 'stop_climate', {}),
+    ('Start the car cool.', 'start_climate', {'temperature_f': 67, 'seat_ventilation': 2,
+                                           'defrost': False, 'rear_defrost': False, 'duration': 10}),
+    ('Cool my seat down.', 'start_climate', {'temperature_f': 67, 'driver_seat_ventilation': 2,
+                                          'passenger_seat_ventilation': 0, 'duration': 10}),
+    ('Lock the car.', 'lock', {}),
+    ('Unlock the car.', 'unlock', {}),
+])
+def test_owner_phrase_corpus_previews_and_executes_once(bridge, text, action, settings):
+    client, manager, factory = bridge
+    preview = client.post('/parse_command', headers=HEADERS, json={'text': text})
+    assert preview.status_code == 200, preview.json
+    plan = preview.json['interpreted']
+    assert plan['action'] == action
+    assert all(plan['parameters'][key] == value for key, value in settings.items())
+    factory.assert_not_called()
+    response = client.post('/execute_command', headers=HEADERS, json={'text': text})
+    assert response.status_code == 202, response.json
+    assert response.json['interpreted'] == plan
+    getattr(manager, action).assert_called_once()
+    assert sum(getattr(manager, name).call_count for name in
+               ('start_climate', 'stop_climate', 'lock', 'unlock')) == 1
+    if text == 'Start the car warm.':
+        options = manager.start_climate.call_args.args[1]
+        assert (options.set_temp, options.front_left_seat, options.front_right_seat,
+                options.defrost, options.heating) == (80, 8, 8, True, 1)
+    if text == 'Start the car cool.':
+        options = manager.start_climate.call_args.args[1]
+        assert (options.set_temp, options.front_left_seat, options.front_right_seat,
+                options.defrost, options.heating) == (67, 4, 4, False, 0)
+    if text == 'Cool my seat down.':
+        options = manager.start_climate.call_args.args[1]
+        assert (options.set_temp, options.front_left_seat, options.front_right_seat,
+                options.defrost, options.heating) == (67, 4, 2, False, 0)
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('Tell Serious to start the car eighty degrees with seat warmers on too and rear de frost and de frost on.',
+     {'temperature_f': 80, 'seat_heat': 2, 'rear_defrost': True, 'defrost': True}),
+    ('start the car with seat warmers on to', {'seat_heat': 2}),
+    ('start the car with driver seat warmer at too', {'driver_seat_heat': 2}),
+    ('Start the car warm, at seventy-five degrees with seat warmers on one and defrost off.',
+     {'temperature_f': 75, 'seat_heat': 1, 'defrost': False, 'rear_defrost': True}),
+    ('start the car cool with seat vents at three', {'temperature_f': 67, 'seat_ventilation': 3}),
+    ('start the car cool with seat heaters at one', {'temperature_f': 67, 'seat_heat': 1}),
+    ('Tell Serious, to turn the car on cool.', {'temperature_f': 67, 'seat_ventilation': 2}),
+])
+def test_bounded_dictation_and_explicit_preset_overrides(bridge, text, expected):
+    client, _, factory = bridge
+    response = client.post('/parse_command', headers=HEADERS, json={'text': text})
+    assert response.status_code == 200, response.json
+    values = response.json['interpreted']['parameters']
+    assert all(values[k] == v for k, v in expected.items())
+    assert not ('seat_heat' in values and 'seat_ventilation' in values)
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize('text', [
+    'do not turn the car on', 'turn the car off then on', 'turn the car not on',
+    "don't tell Serious to unlock", 'start the car warm if it is cold',
+    'unlock the core', 'start the car to degrees', 'start the car at too degrees',
+    'start the car eighty five degrees', 'start the car with rear de frost on and rear defrost off',
+    'start the car warm and cool', 'start the car warm and open a door',
+    'cool my seat down tomorrow', 'cool my seat down and unlock',
+    "don't cool my seat down",
+])
+def test_dictation_does_not_guess_actions_values_or_drop_negation(bridge, text):
+    client, manager, factory = bridge
+    response = client.post('/execute_command', headers=HEADERS, json={'text': text})
+    assert response.status_code == 400, response.json
+    assert response.json['message'] == response.json['error']
+    factory.assert_not_called()
+    assert not manager.mock_calls
+
+
 def test_example_generates_the_expected_us_wire_payload(bridge):
     client, manager, _ = bridge
     client.post("/execute_command", headers=HEADERS, json={"text": EXAMPLE})
@@ -95,8 +180,8 @@ def test_example_generates_the_expected_us_wire_payload(bridge):
     ("start my van with seat heaters on high and rear window defroster off at 78 degrees for 5 minutes",
      {"temperature_f": 78, "seat_heat": 3, "rear_defrost": False, "duration": 5}),
     ("set my car temperature to seventy-two degrees fahrenheit", {"temperature_f": 72}),
-    ("cool down my carnival with seat ventilation at 2", {"temperature_f": 68, "seat_ventilation": 2}),
-    ("warm up my car with front defrost off", {"temperature_f": 74, "defrost": False}),
+    ("cool down my carnival with seat ventilation at 2", {"temperature_f": 67, "seat_ventilation": 2}),
+    ("warm up my car with front defrost off", {"temperature_f": 80, "defrost": False}),
     ("start my car with turn on rear defrost", {"rear_defrost": True}),
     ("start my car at 62 F", {"temperature_f": 62}),
     ("start my car at 82 degrees for one minute", {"temperature_f": 82, "duration": 1}),

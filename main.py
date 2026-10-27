@@ -18,8 +18,10 @@ from kia_session import SessionConfigurationError, load_remembered_session
 
 PRESETS = {
     "default": {"temperature_f": 72, "duration": 10, "defrost": False},
-    "warm": {"temperature_f": 74, "duration": 10, "defrost": True},
-    "cool": {"temperature_f": 68, "duration": 10, "defrost": False},
+    "warm": {"temperature_f": 80, "duration": 10, "defrost": True,
+             "rear_defrost": True, "seat_heat": 3},
+    "cool": {"temperature_f": 67, "duration": 10, "defrost": False,
+             "seat_ventilation": 2},
     "winter": {"temperature_f": 74, "duration": 10, "defrost": True,
                "rear_defrost": True, "seat_heat": 3},
 }
@@ -137,7 +139,7 @@ def create_app(environ=None, manager_factory=VehicleManager):
             except (BadRequest, UnsupportedMediaType):
                 return jsonify(error="Send a valid JSON object with application/json."), 400
             except (InputError, CommandParseError) as exc:
-                return jsonify(error=str(exc)), 400
+                return jsonify(error=str(exc), message=str(exc)), 400
             except VehicleSelectionError as exc:
                 return jsonify(error=str(exc)), 409
             except SessionConfigurationError:

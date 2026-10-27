@@ -71,7 +71,7 @@ In the iPhone Shortcuts app:
 - `driver_seat_heat`, `passenger_seat_heat`: individual front-seat heat levels from 0 to 3.
 - `driver_seat_ventilation`, `passenger_seat_ventilation`: individual front-seat ventilation levels from 0 to 3.
 
-Explicit fields override the preset. Default uses 72 F for 10 minutes with defrost off. Warm uses 74 F for 10 minutes with defrost on. Cool uses 68 F for 10 minutes with defrost off. These are software defaults, not Andrew's confirmed temperature preferences.
+Explicit fields override the preset. Default uses 72 F for 10 minutes with defrost off. Andrew's warm preset uses 80 F, front-seat heat level 3, front defrost, and rear/mirror defrost. His cool preset uses 67 F, front-seat ventilation level 2, and defrost off. Each preset runs for 10 minutes unless a shorter duration is requested. These presets also apply to the existing structured climate routes.
 
 Unknown fields and invalid types are rejected before the app contacts Kia. Temperature changes use the remote-start climate request and may be subject to vehicle state restrictions.
 
@@ -119,8 +119,15 @@ Additional examples:
 - "Unlock," "lock," "turn off," or "unlock Sirius."
 - "Turn on at 80 degrees with defrost and seat warmers at 2."
 - "Tell Sirius to unlock."
+- "Tell Sirius to start the car 80 degrees with the seat warmers on two and rear defrost and defrost on."
+- "Start the car warm" or "start the car cool."
+- "Turn the car on" or "turn the car off."
 
 This parser uses explicit regular-expression rules. It accepts the documented action and setting phrases, including spoken numbers and different setting orders. Short actions use the service's selected vehicle; a vehicle name is optional, and "Sirius" is an alias. Bare "defrost" enables front windshield defrost; "rear defrost" enables rear-window/mirror defrost separately. It rejects unrecognized words, conditions, schedules, conflicting settings, and multiple actions rather than dropping part of a request. It does not call a language model or require a model API key. A command can contain at most 400 characters.
+
+Dictation corrections are context-specific: "Serious" is accepted in a vehicle-name position, "de frost" is accepted in a defrost setting, and "to"/"too" can mean level two only in a seat-level field. This does not enable general fuzzy matching, change temperature numbers, or guess lock versus unlock. Unknown dictation still causes no command.
+
+Andrew selected "cool my seat down" to request remote climate at 67 F for 10 minutes, driver ventilation at level 2, and passenger seat conditioning off. This can start the car's remote climate; seat controls are not a separate seat-only API operation. Parser and validation errors include the same text in `error` and `message`, allowing the spoken-response Shortcut to announce a failed interpretation. Repeat the complete revised instruction; the bridge does not retain a clarification conversation.
 
 For the first Siri integration, create a shortcut named **Car command**:
 

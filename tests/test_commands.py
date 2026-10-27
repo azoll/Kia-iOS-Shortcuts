@@ -70,7 +70,7 @@ def test_climate_uses_fahrenheit_and_explicit_duration(setup_app):
     assert "not yet confirmed" in response.json["message"]
 
 
-@pytest.mark.parametrize("preset,temp,defrost", [("default", 72, False), ("warm", 74, True), ("cool", 68, False)])
+@pytest.mark.parametrize("preset,temp,defrost", [("default", 72, False), ("warm", 80, True), ("cool", 67, False)])
 def test_presets(setup_app, preset, temp, defrost):
     client, manager, _ = setup_app
     assert client.post("/start_climate", headers=HEADERS, json={"preset": preset}).status_code == 202
@@ -85,7 +85,7 @@ def test_explicit_fields_override_preset_without_mutating_it(setup_app):
     options = manager.start_climate.call_args.args[1]
     assert (options.set_temp, options.duration, options.defrost) == (71, 3, False)
     client.post("/start_climate", headers=HEADERS, json={"preset": "warm"})
-    assert manager.start_climate.call_args.args[1].set_temp == 74
+    assert manager.start_climate.call_args.args[1].set_temp == 80
 
 
 @pytest.mark.parametrize("body", [
