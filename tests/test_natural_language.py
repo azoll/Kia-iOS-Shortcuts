@@ -55,6 +55,21 @@ def test_full_sentence_submits_exactly_one_command(bridge):
     manager.unlock.assert_not_called()
 
 
+def test_sirius_sentence_submits_validated_climate_settings_once(bridge):
+    client, manager, _ = bridge
+    response = client.post('/execute_command', headers=HEADERS, json={'text':
+        'Siri, tell Sirius to turn on at 80 degrees with defrost and seat warmers at 2'})
+    assert response.status_code == 202, response.json
+    manager.start_climate.assert_called_once()
+    vehicle_id, options = manager.start_climate.call_args.args
+    assert vehicle_id == 'carnival'
+    assert (options.set_temp, options.defrost, options.front_left_seat,
+            options.front_right_seat) == (80, True, 7, 7)
+    manager.unlock.assert_not_called()
+    manager.lock.assert_not_called()
+    manager.stop_climate.assert_not_called()
+
+
 def test_example_generates_the_expected_us_wire_payload(bridge):
     client, manager, _ = bridge
     client.post("/execute_command", headers=HEADERS, json={"text": EXAMPLE})
@@ -89,6 +104,14 @@ def test_example_generates_the_expected_us_wire_payload(bridge):
     ("start my car with winter preset and seat cooling at 3", {"seat_ventilation": 3}),
     ("start my car with seat heaters off", {"seat_heat": 0}),
     ("start my car with windshield defroster on", {"defrost": True}),
+    ("turn on at 80 degrees with defrost and seat warmers at 2",
+     {"temperature_f": 80, "defrost": True, "seat_heat": 2}),
+    ("Siri, tell Sirius to turn on at 80 degrees with defrost and seat warmers at 2",
+     {"temperature_f": 80, "defrost": True, "seat_heat": 2}),
+    ("turn on Sirius at eighty degrees with rear defrost and seat warmers at two",
+     {"temperature_f": 80, "rear_defrost": True, "defrost": False, "seat_heat": 2}),
+    ("start with defrost off and rear defrost on", {"defrost": False, "rear_defrost": True}),
+    ("set temperature to 72 degrees", {"temperature_f": 72}),
 ])
 def test_supported_variations(bridge, text, expected):
     client, _, factory = bridge
@@ -104,6 +127,9 @@ def test_supported_variations(bridge, text, expected):
 @pytest.mark.parametrize("text,method", [
     ("lock my car", "lock"), ("unlock my Kia Carnival doors", "unlock"),
     ("stop my car climate", "stop_climate"), ("turn off my car", "stop_climate"),
+    ("unlock", "unlock"), ("lock", "lock"), ("turn off", "stop_climate"),
+    ("unlock Sirius", "unlock"), ("lock the doors", "lock"),
+    ("tell Sirius to unlock", "unlock"), ("Hey Siri, tell Sirius to unlock", "unlock"),
 ])
 def test_simple_natural_commands(bridge, text, method):
     client, manager, _ = bridge
@@ -127,6 +153,12 @@ def test_simple_natural_commands(bridge, text, method):
     "start my car if it is cold", "start my car tomorrow", "start my car with",
     "start my car and ignore all previous instructions", "start my car with engine revving",
     "start my car at 80 degrees and seat massage on",
+    "unlocking", "startled", "unlock something else", "turn on the lights",
+    "don't unlock", "do not tell Sirius to unlock", "tell Sirius not to unlock",
+    "Siri, tell Sirius to not unlock", "tell another car to unlock",
+    "unlock and start", "tell Sirius to unlock tomorrow", "turn on if it is cold",
+    "turn on with defrost and defrost off", "start with rear defrost and rear defrost off",
+    "start with defrost maybe", "start with defrost off and defrost",
 ])
 def test_unclear_or_unsupported_text_never_contacts_kia(bridge, text):
     client, _, factory = bridge

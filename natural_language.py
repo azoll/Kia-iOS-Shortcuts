@@ -7,7 +7,7 @@ class CommandParseError(Exception):
     """The instruction cannot be fully interpreted as one supported command."""
 
 
-CAR = r"(?:(?:my|the)\s+)?(?:kia\s+carnival|kia|carnival|car|van)"
+CAR = r"(?:(?:my|the)\s+)?(?:kia\s+carnival|kia|carnival|car|van|sirius)"
 ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 LEVELS = {"off": 0, "low": 1, "medium": 2, "high": 3}
@@ -16,19 +16,19 @@ LEVEL = r"(?P<value>\d+|off|low|medium|high)"
 # The first matching action must begin the instruction. Nothing is executed here.
 ACTIONS = [
     (rf"(?:prepare|warm up)\s+{CAR}\s+for winter\b", "start_climate", {"preset": "winter"}),
-    (rf"(?:remote start|start|turn on)\s+{CAR}(?:\s+climate)?\b", "start_climate", {}),
-    (rf"(?:warm up|warm|heat|preheat)\s+{CAR}\b", "start_climate", {"preset": "warm"}),
-    (rf"(?:cool down|cool|precool)\s+{CAR}\b", "start_climate", {"preset": "cool"}),
-    (rf"set\s+{CAR}(?:'s)?\s+(?:temperature|climate)\b", "start_climate", {}),
-    (rf"(?:stop|turn off)\s+{CAR}(?:'s)?(?:\s+(?:climate|engine))?\b", "stop_climate", {}),
-    (rf"lock\s+{CAR}(?:'s)?(?:\s+doors)?\b", "lock", {}),
-    (rf"unlock\s+{CAR}(?:'s)?(?:\s+doors)?\b", "unlock", {}),
+    (rf"(?:remote start|start|turn on)(?:\s+{CAR})?(?:\s+climate)?\b", "start_climate", {}),
+    (rf"(?:warm up|warm|heat|preheat)(?:\s+{CAR})?\b", "start_climate", {"preset": "warm"}),
+    (rf"(?:cool down|cool|precool)(?:\s+{CAR})?\b", "start_climate", {"preset": "cool"}),
+    (rf"set(?:\s+{CAR}(?:'s)?)?\s+(?:temperature|climate)\b", "start_climate", {}),
+    (rf"(?:stop|turn off)(?:\s+{CAR}(?:'s)?)?(?:\s+(?:climate|engine))?\b", "stop_climate", {}),
+    (rf"lock(?:\s+{CAR}(?:'s)?)?(?:\s+(?:the\s+)?doors)?\b", "lock", {}),
+    (rf"unlock(?:\s+{CAR}(?:'s)?)?(?:\s+(?:the\s+)?doors)?\b", "unlock", {}),
 ]
 
 SEAT_HEAT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat warmers?|seat heaters?|heated seats?|seat heat)"
 SEAT_VENT = r"(?:(?:both\s+)?front\s+|both\s+)?(?:seat ventilation|ventilated seats?|seat cooling|seat coolers?)"
 REAR = r"(?:rear|back)(?:\s+(?:window|windshield))?\s+(?:defrost|defroster|defogger)"
-FRONT = r"(?:front(?:\s+windshield)?|windshield)\s+(?:defrost|defroster|defogger)"
+FRONT = r"(?:(?:front(?:\s+windshield)?|windshield)\s+)?(?:defrost|defroster|defogger)"
 CLAUSES = []
 for seat in ("driver", "passenger"):
     for mode, pattern in (("seat_heat", SEAT_HEAT), ("seat_ventilation", SEAT_VENT)):
@@ -42,6 +42,8 @@ CLAUSES += [
     (rf"(?:turn\s+)?(?:the\s+)?{REAR}\s+(?P<value>on|off)\b", "rear_defrost", "bool"),
     (rf"(?:turn\s+)?(?P<value>on|off)\s+(?:the\s+)?{FRONT}\b", "defrost", "bool"),
     (rf"(?:turn\s+)?(?:the\s+)?{FRONT}\s+(?P<value>on|off)\b", "defrost", "bool"),
+    (rf"(?P<value>{REAR})\b", "rear_defrost", "true"),
+    (rf"(?P<value>{FRONT})\b", "defrost", "true"),
     (r"(?:for\s+)?(?P<value>\d+)\s+minutes?\b", "duration", "int"),
     (r"(?:(?:at|to|temperature(?:\s+(?:at|to))?)\s+)?(?P<value>\d+)\s*(?:degrees?(?:\s+fahrenheit)?|°\s*f?|fahrenheit|f)\b", "temperature_f", "int"),
     (r"(?:at|to|temperature(?:\s+(?:at|to))?)\s+(?P<value>\d+)\b", "temperature_f", "int"),
@@ -58,6 +60,8 @@ def normalize(text):
     text = re.sub(r"\b(sixty|seventy|eighty)(?:[ -]+(one|two|three|four|five|six|seven|eight|nine))?\b", tens, text)
     text = re.sub(r"\b(" + "|".join(ONES) + r")\b", lambda m: str(ONES[m[0]]), text)
     text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"^please\s+", "", text)
+    text = re.sub(r"^(?:(?:hey\s+)?siri[:,]?\s+)?tell\s+sirius\s+to\s+", "", text)
     return re.sub(r"^please\s+", "", text).rstrip(".! ")
 
 
@@ -81,7 +85,7 @@ def parse_command(text):
             remaining = text[match.end():]
             break
     if action is None:
-        raise CommandParseError("Start with start, warm up, cool down, set temperature, stop, lock, or unlock my car.")
+        raise CommandParseError("Use start, turn on, warm up, cool down, set temperature, stop, turn off, lock, or unlock; the vehicle name is optional.")
     seen = set()
     while remaining.strip():
         # Only grammatical separators can be discarded, never unknown words.
@@ -104,6 +108,8 @@ def parse_command(text):
                 value = LEVELS[value] if value in LEVELS else int(value)
             elif kind == "bool":
                 value = value == "on"
+            elif kind == "true":
+                value = True
             parameters[field] = value
             remaining = remaining[match.end():]
             break

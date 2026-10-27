@@ -116,8 +116,11 @@ Additional examples:
 - "Prepare my car for winter."
 - "Start my car at 72 degrees for five minutes."
 - "Lock my car," "unlock my car," or "stop my car climate."
+- "Unlock," "lock," "turn off," or "unlock Sirius."
+- "Turn on at 80 degrees with defrost and seat warmers at 2."
+- "Tell Sirius to unlock."
 
-This is a constrained natural language parser. It accepts the documented action and setting phrases, including spoken numbers and different setting orders. It rejects unrecognized words, conditions, schedules, conflicting settings, and multiple actions rather than dropping part of a request. It does not call a language model or require a model API key. A command can contain at most 400 characters.
+This parser uses explicit regular-expression rules. It accepts the documented action and setting phrases, including spoken numbers and different setting orders. Short actions use the service's selected vehicle; a vehicle name is optional, and "Sirius" is an alias. Bare "defrost" enables front windshield defrost; "rear defrost" enables rear-window/mirror defrost separately. It rejects unrecognized words, conditions, schedules, conflicting settings, and multiple actions rather than dropping part of a request. It does not call a language model or require a model API key. A command can contain at most 400 characters.
 
 For the first Siri integration, create a shortcut named **Car command**:
 
@@ -126,7 +129,7 @@ For the first Siri integration, create a shortcut named **Car command**:
 3. To submit a command, send the original input to `POST /execute_command` instead. Read and speak its `message` field. If the response contains an `error`, speak it and stop.
 4. Say "Hey Siri, Car command," then answer its prompt with the full instruction.
 
-Launching the shortcut and supplying its instruction are separate parts of this initial Siri flow. Do not assume that Siri passes an arbitrary spoken suffix after the shortcut name. A single uninterrupted Siri phrase needs a later iOS integration. No signed Shortcut file has been generated or installed.
+Launching the shortcut and supplying its instruction are separate parts of this initial Siri flow. The parser accepts a leading "tell Sirius to", optionally preceded by "Siri," when that text is supplied to the endpoint. This does not register a Siri invocation or cause Siri to forward an arbitrary spoken suffix. For direct fixed commands, use separate personal Shortcuts named "Unlock Sirius" or "Lock Sirius" that send fixed text without asking for input. A native app with App Intents is a separate integration option; its phrase and parameter limits still need testing before promising a single unrestricted sentence.
 
 `GET /capabilities` lists this bridge's implemented controls and the known hardware constraints. It is not a live Kia feature-discovery response. Sliding-door and liftgate requests remain unverified and unavailable; see [the investigation](docs/doors-and-liftgate.md).
 

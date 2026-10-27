@@ -12,6 +12,8 @@ The SX has heated and ventilated front seats and heated mirrors. Andrew confirme
 
 ## Acceptance criteria
 
+- Short instructions such as "unlock", "lock", "turn on", and "turn off" target the already selected vehicle. "Sirius" is a vehicle alias, and a leading "tell Sirius to" (optionally preceded by "Siri,") can be parsed when supplied as text. This does not change Siri's ability to forward an invocation's suffix into a personal Shortcut.
+- "Turn on at 80 degrees with defrost and seat warmers at 2" requests 80 F, front windshield defrost, and front-seat heat level 2. Bare "rear defrost" enables rear/mirror defrost separately. Explicit on/off settings take precedence in matching; duplicate or conflicting clauses are rejected.
 - The example sentence produces an 80 F climate request, front-seat heat level 3, and rear/mirror defrost enabled.
 - Seat levels 1, 2, and 3 map to the U.S. library's low, medium, and high values. Level 0 turns the front-seat controls off.
 - A given seat cannot explicitly request heating and ventilation together.
