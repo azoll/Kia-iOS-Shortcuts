@@ -18,6 +18,8 @@ Never paste passwords, PINs, tokens, service-account keys, or an exported enviro
 
 ## Prepare the personal project
 
+For guided setup without navigating the API, service-account, or Secret Manager screens, run `bash scripts/setup-cloud-run.sh` from this branch in your own Cloud Shell. It shows the selected project for confirmation, prompts privately for missing Kia credentials, creates a random bridge token, and performs the setup below. If no project is selected it lists projects and asks for the personal project ID. Existing enabled secret versions are retained. No secret values are printed, and the resulting service still requires Google IAM authentication. Enter credentials only in your own Cloud Shell terminal, never in chat.
+
 Open Google Cloud Shell in your own account. Create/select a personal project and enable its billing. In Cloud Shell, clone the reviewed deployment branch:
 
 ```bash
