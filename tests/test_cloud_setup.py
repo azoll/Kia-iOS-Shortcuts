@@ -26,9 +26,12 @@ elif args[:3] == ['billing', 'projects', 'describe']:
     print(os.environ.get('FAKE_BILLING', 'True'))
 elif args[:3] == ['iam', 'service-accounts', 'list']:
     print('existing-service-account')
-elif args[:2] == ['secrets', 'list'] and os.environ.get('FAKE_EXISTING') == '1':
-    for name in ('kia-username', 'kia-password', 'kia-pin', 'kia-bridge-token'):
-        print('projects/example/secrets/' + name)
+elif args[:2] == ['secrets', 'list']:
+    if os.environ.get('FAKE_EXISTING') == '1':
+        for name in ('kia-username', 'kia-password', 'kia-pin', 'kia-bridge-token'):
+            print('projects/example/secrets/' + name)
+    if os.environ.get('FAKE_SESSION') == '1':
+        print('projects/example/secrets/kia-session')
 elif args[:3] == ['secrets', 'versions', 'list']:
     print('projects/example/secrets/example/versions/1')
 elif args[:2] == ['secrets', 'create']:
@@ -151,6 +154,15 @@ def test_credential_correction_mismatch_does_not_change_secrets(cloud_env):
     assert code != 0
     assert "No secrets were changed" in output
     assert not log.exists()
+
+
+def test_redeployment_retains_optional_remembered_session_reference(cloud_env):
+    env, log = cloud_env
+    code, output = in_terminal(env | {"FAKE_EXISTING": "1", "FAKE_SESSION": "1"},
+                               [("Type deploy:", "deploy")])
+    assert code == 0, output
+    deployment = next(call for call in calls(log) if call[:2] == ["run", "deploy"])
+    assert any("KIA_SESSION=kia-session:1" in arg for arg in deployment)
 
 
 def test_credential_correction_never_displays_password_and_redeploys(cloud_env):

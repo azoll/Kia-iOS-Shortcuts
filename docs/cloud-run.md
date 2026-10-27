@@ -95,6 +95,14 @@ gcloud run services remove-iam-policy-binding kia-siri-bridge --project="$KIA_CL
 
 ## Validation and status
 
+### Kia verification codes and remembered sessions
+
+A `kia_otp_required` diagnostic means the library reached Kia's verification-code flow. Complete it in the owner's Cloud Shell with `scripts/enroll-kia-session.py PROJECT_ID`, using the pinned Python dependencies. The helper reads the deployed username/password/PIN secret versions, offers only the email/SMS methods Kia reports, requests one code, and accepts the code through hidden terminal input. Codes, passwords, session tokens, and destinations are never printed or written to the repository. No vehicle commands are executed.
+
+After successful verification, save only a versioned account binding, device ID, and remember token in the `kia-session` Secret Manager secret. Do not serialize the full library Token, which also holds the password and PIN. Grant the runtime read access only to that secret and redeploy with its pinned version as `KIA_SESSION`. The runtime restores the device identity and refreshes from the remember token on first Kia access after startup. It does not need write access to Secret Manager. This can avoid repeated verification while Kia accepts the remembered session; expiry or revocation requires enrollment again. Cold-start reuse must be verified on the actual service.
+
+Malformed or account-mismatched session configuration fails closed before contacting Kia. The diagnostic is `kia_session_invalid`. Local previews continue to work without loading the saved session.
+
 If the username or password may have been entered incorrectly, run `python3 scripts/update-kia-credentials.py PROJECT_ID` in your own Cloud Shell. The email is visible so it can be checked; the password must be entered twice and stays hidden. No secret versions are changed if the two password entries differ. The helper creates new username/password secret versions through stdin and redeploys so Cloud Run uses the new versions. The PIN and bridge token are retained. It does not change the Kia account's actual password or execute any vehicle command.
 
 For private HTTP verification from your own Cloud Shell, run `python3 scripts/check-cloud-run.py PROJECT_ID`. It reads the deployed bridge token's pinned secret version without printing it and uses separate Google and bridge authentication headers. It checks health, rejection without the bridge token, and parsing without Kia initialization. Add `--kia-login` to attempt Kia login once and list vehicle names/models/years if successful. These routes never actuate the vehicle. A failed login prints only a safe diagnostic category: missing configuration, required verification code, required account consent, or other authentication failure. It does not print upstream response details, tokens, passwords, or PINs.

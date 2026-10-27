@@ -50,7 +50,7 @@ def main():
         if status != expected:
             # Never print upstream exception text, response headers, or tokens.
             code = result.get("error_code") if isinstance(result, dict) else None
-            known = {"service_configuration_missing", "kia_otp_required",
+            known = {"service_configuration_missing", "kia_otp_required", "kia_session_invalid",
                      "kia_consent_required", "kia_authentication_failed"}
             print("Diagnostic:", code if code in known else "unclassified")
             raise SystemExit(1)

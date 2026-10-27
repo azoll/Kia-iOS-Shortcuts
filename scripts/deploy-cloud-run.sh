@@ -39,6 +39,20 @@ for pair in KIA_USERNAME:kia-username KIA_PASSWORD:kia-password KIA_PIN:kia-pin 
   fi
   refs+=("${key}=${secret}:${version}")
 done
+# Enrollment adds this optional secret. Reuse its pinned version on later deploys.
+secret_names="$(gcloud secrets list --project="$project" --format='value(name)')"
+while IFS= read -r name; do
+  if [[ "${name##*/}" == kia-session ]]; then
+    version="$(gcloud secrets versions list kia-session --project="$project" \
+      --filter='state=ENABLED' --sort-by='~createTime' --limit=1 --format='value(name)')"
+    version="${version##*/}"
+    if [[ ! "$version" =~ ^[0-9]+$ ]]; then
+      echo "kia-session has no enabled version. Complete enrollment first." >&2
+      exit 1
+    fi
+    refs+=("KIA_SESSION=kia-session:${version}")
+  fi
+done <<< "$secret_names"
 secret_refs="$(IFS=,; echo "${refs[*]}")"
 
 gcloud run deploy "$service" --project="$project" --region="$region" \

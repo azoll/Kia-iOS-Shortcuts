@@ -13,6 +13,7 @@ from hyundai_kia_connect_api.exceptions import (
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from natural_language import CommandParseError, parse_command
+from kia_session import SessionConfigurationError, load_remembered_session
 
 
 PRESETS = {
@@ -139,6 +140,9 @@ def create_app(environ=None, manager_factory=VehicleManager):
                 return jsonify(error=str(exc)), 400
             except VehicleSelectionError as exc:
                 return jsonify(error=str(exc)), 409
+            except SessionConfigurationError:
+                return jsonify(error="Saved Kia session configuration requires enrollment.",
+                               error_code="kia_session_invalid"), 503
             except ServiceConfigurationError:
                 return jsonify(error="Configure the required service settings first.",
                                error_code="service_configuration_missing"), 503
@@ -164,13 +168,20 @@ def create_app(environ=None, manager_factory=VehicleManager):
         if any(not settings.get(key) for key in REQUIRED_SETTINGS):
             raise ServiceConfigurationError()
         if manager is None:
+            restored = None
+            if settings.get("KIA_SESSION"):
+                restored = load_remembered_session(settings["KIA_SESSION"],
+                    settings["KIA_USERNAME"], settings["KIA_PASSWORD"], settings["KIA_PIN"])
             manager = manager_factory(
                 region=3,
                 brand=1,
                 username=settings["KIA_USERNAME"],
                 password=settings["KIA_PASSWORD"],
                 pin=settings["KIA_PIN"],
+                **({"token": restored} if restored is not None else {}),
             )
+            if restored is not None:
+                manager.api.device_id = restored.device_id
         manager.check_and_refresh_token()
         return manager
 

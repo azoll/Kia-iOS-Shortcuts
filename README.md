@@ -27,6 +27,7 @@ The local server listens on 127.0.0.1:8080. The health endpoint does not contact
 - `KIA_PIN` is the account's remote-command PIN.
 - `SECRET_KEY` is a service token of at least 32 characters.
 - `VEHICLE_ID` selects a vehicle returned by `GET /list_vehicles`. This is the library's account vehicle ID, not necessarily the VIN. It is required when more than one vehicle is enrolled.
+- `KIA_SESSION` optionally restores an enrolled remembered session from Secret Manager. Use the [Cloud Shell verification-code flow](docs/cloud-run.md#kia-verification-codes-and-remembered-sessions) to create it. The runtime refreshes it on first Kia access after startup; an expired or revoked remembered session needs enrollment again.
 
 Set secrets through the host's environment settings. The example file contains empty values only. The app does not load `.env` itself; the local uv command loads it.
 
