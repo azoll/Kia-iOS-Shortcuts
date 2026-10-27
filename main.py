@@ -7,7 +7,9 @@ from threading import RLock
 
 from flask import Flask, jsonify, request
 from hyundai_kia_connect_api import ClimateRequestOptions, VehicleManager
-from hyundai_kia_connect_api.exceptions import AuthenticationError
+from hyundai_kia_connect_api.exceptions import (
+    AuthenticationError, AuthenticationOTPRequired, ConsentRequiredError,
+)
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from natural_language import CommandParseError, parse_command
@@ -138,10 +140,18 @@ def create_app(environ=None, manager_factory=VehicleManager):
             except VehicleSelectionError as exc:
                 return jsonify(error=str(exc)), 409
             except ServiceConfigurationError:
-                return jsonify(error="Configure the required service settings first."), 503
+                return jsonify(error="Configure the required service settings first.",
+                               error_code="service_configuration_missing"), 503
+            except AuthenticationOTPRequired:
+                return jsonify(error="Kia requires a verification code to sign in.",
+                               error_code="kia_otp_required"), 503
+            except ConsentRequiredError:
+                return jsonify(error="Kia account consent requires attention.",
+                               error_code="kia_consent_required"), 503
             except AuthenticationError:
                 return jsonify(
                     error="Kia authentication requires attention.",
+                    error_code="kia_authentication_failed",
                     message="Verify the service credentials and Kia authentication requirements.",
                 ), 503
             except Exception:

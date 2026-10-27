@@ -1,6 +1,7 @@
 """Verify setup boundaries with a fake gcloud and a real terminal."""
 
 import errno
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,10 @@ elif args[:2] == ['secrets', 'create']:
     if args[2] == 'kia-pin':
         assert value == '0007'
     assert len(value) >= (32 if args[2] == 'kia-bridge-token' else 1)
+elif args[:3] == ['secrets', 'versions', 'add']:
+    import hashlib
+    with open(os.environ['FAKE_LOG'] + '.inputs', 'a') as log:
+        log.write(json.dumps({'secret': args[3], 'sha256': hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}) + '\n')
 elif args[:3] == ['run', 'services', 'describe']:
     print('https://example.invalid')
 '''
@@ -54,10 +59,11 @@ def calls(log):
     return [json.loads(line) for line in log.read_text().splitlines()]
 
 
-def in_terminal(env, replies):
+def in_terminal(env, replies, command=None):
     pid, terminal = pty.fork()
     if pid == 0:
-        os.execvpe("bash", ["bash", str(SETUP), "personal-project"], env)
+        command = command or ["bash", str(SETUP), "personal-project"]
+        os.execvpe(command[0], command, env)
     output = b""
     pending = list(replies)
     deadline = time.monotonic() + 15
@@ -134,3 +140,34 @@ def test_new_secret_entry_is_hidden_and_pin_keeps_leading_zeros(cloud_env):
     assert username not in output and password not in output and "0007" not in output
     creates = [call[2] for call in calls(log) if call[:2] == ["secrets", "create"]]
     assert creates == ["kia-username", "kia-password", "kia-pin", "kia-bridge-token"]
+
+
+def test_credential_correction_mismatch_does_not_change_secrets(cloud_env):
+    env, log = cloud_env
+    command = [sys.executable, str(SETUP.with_name("update-kia-credentials.py")), "personal-project"]
+    code, output = in_terminal(env, [("Kia email (visible):", "example@example.invalid"),
+        ("Kia password (hidden):", "first-private-password"),
+        ("Repeat Kia password (hidden):", "second-private-password")], command)
+    assert code != 0
+    assert "No secrets were changed" in output
+    assert not log.exists()
+
+
+def test_credential_correction_never_displays_password_and_redeploys(cloud_env):
+    env, log = cloud_env
+    username, password = "example@example.invalid", "  exact-private-password  "
+    command = [sys.executable, str(SETUP.with_name("update-kia-credentials.py")), "personal-project"]
+    code, output = in_terminal(env, [("Kia email (visible):", username),
+        ("Kia password (hidden):", password), ("Repeat Kia password (hidden):", password)], command)
+    assert code == 0, output
+    assert username in output
+    assert password.strip() not in output
+    operations = calls(log)
+    assert not any(password in arg for call in operations for arg in call)
+    written = [json.loads(line) for line in Path(str(log) + ".inputs").read_text().splitlines()]
+    assert written == [
+        {"secret": "kia-username", "sha256": hashlib.sha256(username.encode()).hexdigest()},
+        {"secret": "kia-password", "sha256": hashlib.sha256(password.encode()).hexdigest()},
+    ]
+    assert any(call[:2] == ["run", "deploy"] for call in operations)
+    assert not any(call[:3] == ["secrets", "versions", "access"] for call in operations)

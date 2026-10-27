@@ -5,7 +5,9 @@ from unittest.mock import Mock
 
 import pytest
 from hyundai_kia_connect_api import ClimateRequestOptions
-from hyundai_kia_connect_api.exceptions import AuthenticationError
+from hyundai_kia_connect_api.exceptions import (
+    AuthenticationError, AuthenticationOTPRequired, ConsentRequiredError,
+)
 
 from main import create_app
 
@@ -181,8 +183,27 @@ def test_missing_or_short_secret_fails_closed(setup_app):
 def test_missing_kia_settings_do_not_initialize_manager(setup_app):
     _, _, factory = setup_app
     client = create_app({"SECRET_KEY": SECRET}, factory).test_client()
-    assert client.post("/unlock_car", headers=HEADERS).status_code == 503
+    response = client.post("/unlock_car", headers=HEADERS)
+    assert response.status_code == 503
+    assert response.json["error_code"] == "service_configuration_missing"
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize("exception,code", [
+    (AuthenticationOTPRequired, "kia_otp_required"),
+    (ConsentRequiredError, "kia_consent_required"),
+    (AuthenticationError, "kia_authentication_failed"),
+])
+def test_kia_authentication_failure_categories_are_safe(setup_app, exception, code):
+    client, manager, _ = setup_app
+    manager.check_and_refresh_token.side_effect = exception("PRIVATE_SESSION_DETAIL")
+    response = client.get("/auth_status", headers=HEADERS)
+    assert response.status_code == 503
+    assert response.json["error_code"] == code
+    assert "PRIVATE_SESSION_DETAIL" not in response.get_data(as_text=True)
+    manager.start_climate.assert_not_called()
+    manager.lock.assert_not_called()
+    manager.unlock.assert_not_called()
 
 
 def test_simple_commands_reject_extra_fields(setup_app):
