@@ -1,276 +1,311 @@
+"""Authenticated Siri command bridge for a U.S. Kia Connect account."""
+
+import hmac
 import os
-from flask import Flask, request, jsonify
-from hyundai_kia_connect_api import VehicleManager, ClimateRequestOptions
-from hyundai_kia_connect_api.exceptions import AuthenticationError
+from functools import wraps
+from threading import RLock
 
-app = Flask(__name__)
-
-# =========================
-# Environment Variables
-# =========================
-USERNAME = os.environ.get("KIA_USERNAME")
-PASSWORD = os.environ.get("KIA_PASSWORD")
-PIN = os.environ.get("KIA_PIN")
-SECRET_KEY = os.environ.get("SECRET_KEY")
-VEHICLE_ID = os.environ.get("VEHICLE_ID")  # Optional
-
-missing = []
-if not USERNAME:
-    missing.append("KIA_USERNAME")
-if not PASSWORD:
-    missing.append("KIA_PASSWORD")
-if not PIN:
-    missing.append("KIA_PIN")
-if not SECRET_KEY:
-    missing.append("SECRET_KEY")
-
-if missing:
-    raise ValueError(f"Missing environment variables: {', '.join(missing)}")
-
-# =========================
-# Vehicle Manager
-# =========================
-vehicle_manager = VehicleManager(
-    region=3,  # North America
-    brand=1,   # KIA
-    username=USERNAME,
-    password=PASSWORD,
-    pin=str(PIN)
+from flask import Flask, jsonify, request
+from hyundai_kia_connect_api import ClimateRequestOptions, VehicleManager
+from hyundai_kia_connect_api.exceptions import (
+    AuthenticationError, AuthenticationOTPRequired, ConsentRequiredError,
 )
+from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
-# =========================
-# Helper Functions
-# =========================
-def authorize_request():
-    return request.headers.get("Authorization") == SECRET_KEY
+from natural_language import CommandParseError, parse_command
+from kia_session import SessionConfigurationError, load_remembered_session
 
 
-def ensure_authenticated():
-    """
-    Attempt to refresh Kia token.
-    Will fail if Kia requires OTP / captcha.
-    """
-    try:
-        vehicle_manager.check_and_refresh_token()
-    except AuthenticationError as e:
-        raise AuthenticationError(
-            "Kia authentication failed. "
-            "Open the Kia app and complete 2FA, then retry."
-        ) from e
+PRESETS = {
+    "default": {"temperature_f": 72, "duration": 10, "defrost": False},
+    "warm": {"temperature_f": 80, "duration": 10, "defrost": True,
+             "rear_defrost": True, "seat_heat": 3},
+    "cool": {"temperature_f": 67, "duration": 10, "defrost": False,
+             "seat_ventilation": 2},
+    "winter": {"temperature_f": 74, "duration": 10, "defrost": True,
+               "rear_defrost": True, "seat_heat": 3},
+}
+REQUIRED_SETTINGS = ("KIA_USERNAME", "KIA_PASSWORD", "KIA_PIN", "SECRET_KEY")
+SEAT_FIELDS = tuple(prefix + mode for prefix in ("", "driver_", "passenger_")
+                    for mode in ("seat_heat", "seat_ventilation"))
 
 
-def refresh_and_sync():
-    """
-    Refresh token and sync vehicle state
-    """
-    ensure_authenticated()
-    vehicle_manager.update_all_vehicles_with_cached_state()
+class InputError(Exception):
+    """The command payload is invalid."""
 
 
-def get_vehicle_id():
-    """
-    Return VEHICLE_ID if provided, otherwise
-    dynamically select the first vehicle.
-    """
-    if VEHICLE_ID:
-        return VEHICLE_ID
-
-    vehicles = vehicle_manager.vehicles
-    if not vehicles:
-        raise ValueError("No vehicles found on the Kia account.")
-
-    first_vehicle_id = next(iter(vehicles.keys()))
-    return first_vehicle_id
+class VehicleSelectionError(Exception):
+    """The account cannot resolve the intended vehicle."""
 
 
-# =========================
-# Logging
-# =========================
-@app.before_request
-def log_request_info():
-    print(f"Incoming request: {request.method} {request.path}")
+class ServiceConfigurationError(Exception):
+    """Required service settings are absent."""
 
 
-# =========================
-# Routes
-# =========================
-@app.route("/", methods=["GET"])
-def root():
-    return jsonify({
-        "status": "OK",
-        "service": "Kia Vehicle Control API"
-    }), 200
+def climate_settings(payload):
+    """Resolve defaults and validate the complete climate request."""
+    if not isinstance(payload, dict):
+        raise InputError("The request body must be a JSON object.")
+    unknown = payload.keys() - ({"preset", "temperature_f", "duration", "defrost",
+                                 "rear_defrost"} | set(SEAT_FIELDS))
+    if unknown:
+        raise InputError("The climate request contains unsupported fields.")
+    preset = payload.get("preset", "default")
+    if not isinstance(preset, str) or preset not in PRESETS:
+        raise InputError("Preset must be default, warm, cool, or winter.")
+    values = {"rear_defrost": False} | PRESETS[preset] | {
+        k: v for k, v in payload.items() if k != "preset"
+    }
+    # A requested seat mode replaces the mode inherited from a preset.
+    if "seat_heat" in payload and "seat_ventilation" in payload:
+        raise InputError("Choose front-seat heating or ventilation, not a combination.")
+    if "seat_ventilation" in payload:
+        values.pop("seat_heat", None)
+    if "seat_heat" in payload:
+        values.pop("seat_ventilation", None)
+    temperature = values["temperature_f"]
+    if type(temperature) is not int or not 62 <= temperature <= 82:
+        raise InputError("temperature_f must be a whole number from 62 to 82.")
+    duration = values["duration"]
+    if type(duration) is not int or not 1 <= duration <= 10:
+        raise InputError("duration must be a whole number from 1 to 10 minutes.")
+    if type(values["defrost"]) is not bool:
+        raise InputError("defrost must be true or false.")
+    if type(values["rear_defrost"]) is not bool:
+        raise InputError("rear_defrost must be true or false.")
+    for field in SEAT_FIELDS:
+        if field in values and (type(values[field]) is not int or not 0 <= values[field] <= 3):
+            raise InputError(f"{field} must be a whole number from 0 to 3.")
+    if any(field in payload for field in SEAT_FIELDS if field.startswith(("driver_", "passenger_"))):
+        # The U.S. adapter sends every seat when any seat is requested. Resolve
+        # the other front seat to off unless a shared setting/preset supplies it.
+        shared_mode = "seat_ventilation" if "seat_ventilation" in values else "seat_heat"
+        shared_level = values.get(shared_mode, 0)
+        for seat in ("driver", "passenger"):
+            heat, vent = f"{seat}_seat_heat", f"{seat}_seat_ventilation"
+            if heat in payload and vent in payload:
+                raise InputError(f"Choose heating or ventilation for the {seat} seat.")
+            if heat not in payload and vent not in payload:
+                values[f"{seat}_{shared_mode}"] = shared_level
+        values.pop("seat_heat", None)
+        values.pop("seat_ventilation", None)
+    return values
 
 
-@app.route("/auth_status", methods=["GET"])
-def auth_status():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-
-    try:
-        ensure_authenticated()
-        return jsonify({"status": "authenticated"}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "status": "authentication_failed",
-            "message": str(e)
-        }), 401
-
-
-@app.route("/list_vehicles", methods=["GET"])
-def list_vehicles():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-
-    try:
-        refresh_and_sync()
-
-        vehicles = vehicle_manager.vehicles
-        if not vehicles:
-            return jsonify({"error": "No vehicles found"}), 404
-
-        vehicle_list = [
-            {
-                "name": v.name,
-                "id": v.id,
-                "model": v.model,
-                "year": v.year
-            }
-            for v in vehicles.values()
-        ]
-
-        return jsonify({
-            "status": "success",
-            "vehicles": vehicle_list
-        }), 200
-
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def climate_options(payload):
+    """Map validated front-seat levels and defrost to U.S. Kia fields."""
+    values = climate_settings(payload)
+    seats = {}
+    for seat, option in (("driver", "front_left_seat"), ("passenger", "front_right_seat")):
+        for mode, offset in (("seat_heat", 5), ("seat_ventilation", 2)):
+            field = f"{seat}_{mode}" if f"{seat}_{mode}" in values else mode
+            if field in values:
+                level = values[field]
+                seats[option] = offset + level if level else 2
+    return ClimateRequestOptions(
+        set_temp=values["temperature_f"],
+        duration=values["duration"],
+        defrost=values["defrost"],
+        climate=True,
+        heating=1 if values["rear_defrost"] else 0,
+        steering_wheel=0,
+        **seats,
+    )
 
 
-@app.route("/start_climate", methods=["POST"])
-def start_climate():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
+def create_app(environ=None, manager_factory=VehicleManager):
+    """Build the app without signing in or sending a vehicle command."""
+    settings = dict(os.environ if environ is None else environ)
+    app = Flask(__name__)
+    manager = None
+    command_lock = RLock()
 
-    try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
+    def authenticated(fn):
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            secret = settings.get("SECRET_KEY", "")
+            if len(secret) < 32:
+                return jsonify(error="Service authentication is not configured."), 503
+            supplied = request.headers.get("Authorization", "")
+            if supplied.startswith("Bearer "):
+                supplied = supplied[7:]
+            # The raw token remains compatible with upstream iOS shortcuts.
+            if not hmac.compare_digest(supplied.encode(), secret.encode()):
+                return jsonify(error="Unauthorized"), 401
+            try:
+                # The library mutates shared tokens and vehicle state.
+                with command_lock:
+                    return fn(*args, **kwargs)
+            except (BadRequest, UnsupportedMediaType):
+                return jsonify(error="Send a valid JSON object with application/json."), 400
+            except (InputError, CommandParseError) as exc:
+                return jsonify(error=str(exc), message=str(exc)), 400
+            except VehicleSelectionError as exc:
+                return jsonify(error=str(exc)), 409
+            except SessionConfigurationError:
+                return jsonify(error="Saved Kia session configuration requires enrollment.",
+                               error_code="kia_session_invalid"), 503
+            except ServiceConfigurationError:
+                return jsonify(error="Configure the required service settings first.",
+                               error_code="service_configuration_missing"), 503
+            except AuthenticationOTPRequired:
+                return jsonify(error="Kia requires a verification code to sign in.",
+                               error_code="kia_otp_required"), 503
+            except ConsentRequiredError:
+                return jsonify(error="Kia account consent requires attention.",
+                               error_code="kia_consent_required"), 503
+            except AuthenticationError:
+                return jsonify(
+                    error="Kia authentication requires attention.",
+                    error_code="kia_authentication_failed",
+                    message="Verify the service credentials and Kia authentication requirements.",
+                ), 503
+            except Exception:
+                # Upstream exception strings can contain account or session data.
+                return jsonify(error="Kia could not process the request. Completion is unknown."), 502
+        return wrapped
 
-        climate_options = ClimateRequestOptions(
-            set_temp=72,
-            duration=10
+    def get_manager():
+        nonlocal manager
+        if any(not settings.get(key) for key in REQUIRED_SETTINGS):
+            raise ServiceConfigurationError()
+        if manager is None:
+            restored = None
+            if settings.get("KIA_SESSION"):
+                restored = load_remembered_session(settings["KIA_SESSION"],
+                    settings["KIA_USERNAME"], settings["KIA_PASSWORD"], settings["KIA_PIN"])
+            manager = manager_factory(
+                region=3,
+                brand=1,
+                username=settings["KIA_USERNAME"],
+                password=settings["KIA_PASSWORD"],
+                pin=settings["KIA_PIN"],
+                **({"token": restored} if restored is not None else {}),
+            )
+            if restored is not None:
+                manager.api.device_id = restored.device_id
+        manager.check_and_refresh_token()
+        return manager
+
+    def selected_vehicle(client):
+        vehicle_id = settings.get("VEHICLE_ID")
+        if vehicle_id:
+            if vehicle_id not in client.vehicles:
+                raise VehicleSelectionError("VEHICLE_ID does not match a vehicle on the account.")
+            return vehicle_id
+        if len(client.vehicles) != 1:
+            raise VehicleSelectionError("Set VEHICLE_ID to select the intended vehicle.")
+        return next(iter(client.vehicles))
+
+    def submitted(command, command_id):
+        if not isinstance(command_id, str) or not command_id:
+            return jsonify(error="Kia did not provide a command identifier. Completion is unknown."), 502
+        return jsonify(
+            status="submitted",
+            command=command,
+            command_id=command_id,
+            message="Request submitted to Kia. Vehicle completion is not yet confirmed.",
+        ), 202
+
+    @app.get("/")
+    def root():
+        return jsonify(status="ok", service="Carnival Siri bridge")
+
+    @app.get("/auth_status")
+    @authenticated
+    def auth_status():
+        get_manager()
+        return jsonify(status="authenticated")
+
+    @app.get("/list_vehicles")
+    @authenticated
+    def list_vehicles():
+        client = get_manager()
+        return jsonify(vehicles=[
+            {"id": v.id, "name": v.name, "model": v.model, "year": v.year}
+            for v in client.vehicles.values()
+        ])
+
+    @app.get("/capabilities")
+    @authenticated
+    def capabilities():
+        return jsonify(
+            vehicle="2026 Kia Carnival Hybrid SX (U.S.)",
+            implemented=["start_climate", "stop_climate", "lock", "unlock",
+                         "front_seat_heat", "front_seat_ventilation", "rear_mirror_defrost",
+                         "individual_front_seat_settings"],
+            live_vehicle_verified=False,
+            unavailable={"heated_steering_wheel": "not equipped",
+                         "rear_seat_heat": "not equipped",
+                         "power_sliding_doors": "U.S. command unverified",
+                         "power_liftgate": "U.S. command unverified",
+                         "horn_lights": "U.S. command not implemented"},
         )
 
-        result = vehicle_manager.start_climate(vehicle_id, climate_options)
+    def interpreted_command():
+        payload = request.get_json()
+        if not isinstance(payload, dict) or set(payload) != {"text"}:
+            raise InputError("Send a JSON object containing only text.")
+        plan = parse_command(payload["text"])
+        if plan["action"] == "start_climate":
+            plan["parameters"] = climate_settings(plan["parameters"])
+        return plan
 
-        return jsonify({
-            "status": "climate_started",
-            "result": result
-        }), 200
+    @app.post("/parse_command")
+    @authenticated
+    def preview_command():
+        return jsonify(status="preview", interpreted=interpreted_command())
 
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
+    @app.post("/execute_command")
+    @authenticated
+    def execute_command():
+        plan = interpreted_command()
+        client = get_manager()
+        vehicle_id = selected_vehicle(client)
+        if plan["action"] == "start_climate":
+            result = client.start_climate(vehicle_id, climate_options(plan["parameters"]))
+        else:
+            methods = {"stop_climate": client.stop_climate,
+                       "lock": client.lock, "unlock": client.unlock}
+            result = methods[plan["action"]](vehicle_id)
+        response, status = submitted(plan["action"], result)
+        if status == 202:
+            return jsonify(response.get_json() | {"interpreted": plan}), status
+        return response, status
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    @app.post("/start_climate")
+    @authenticated
+    def start_climate():
+        options = climate_options(request.get_json() if request.get_data() else {})
+        client = get_manager()
+        return submitted("start_climate", client.start_climate(selected_vehicle(client), options))
 
+    def simple_command(command, method):
+        # These commands accept no parameters. Reject accidental or misspelled bodies.
+        if request.get_data() and request.get_json() != {}:
+            raise InputError("This command accepts an empty JSON object only.")
+        client = get_manager()
+        return submitted(command, getattr(client, method)(selected_vehicle(client)))
 
-@app.route("/stop_climate", methods=["POST"])
-def stop_climate():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
+    @app.post("/stop_climate")
+    @authenticated
+    def stop_climate():
+        return simple_command("stop_climate", "stop_climate")
 
-    try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
+    @app.post("/lock_car")
+    @authenticated
+    def lock_car():
+        return simple_command("lock", "lock")
 
-        result = vehicle_manager.stop_climate(vehicle_id)
+    @app.post("/unlock_car")
+    @authenticated
+    def unlock_car():
+        return simple_command("unlock", "unlock")
 
-        return jsonify({
-            "status": "climate_stopped",
-            "result": result
-        }), 200
-
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/unlock_car", methods=["POST"])
-def unlock_car():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-
-    try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
-
-        result = vehicle_manager.unlock(vehicle_id)
-
-        return jsonify({
-            "status": "car_unlocked",
-            "result": result
-        }), 200
-
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return app
 
 
-@app.route("/lock_car", methods=["POST"])
-def lock_car():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
+app = create_app()
 
-    try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
-
-        result = vehicle_manager.lock(vehicle_id)
-
-        return jsonify({
-            "status": "car_locked",
-            "result": result
-        }), 200
-
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# =========================
-# App Entry
-# =========================
 if __name__ == "__main__":
-    print("Starting Kia Vehicle Control API...")
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="127.0.0.1", port=8080)
