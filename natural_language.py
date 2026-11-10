@@ -50,8 +50,9 @@ CLAUSES += [
     (rf"(?P<value>{REAR})\b", "rear_defrost", "true"),
     (rf"(?P<value>{FRONT})\b", "defrost", "true"),
     (r"(?:for\s+)?(?P<value>\d+)\s+minutes?\b", "duration", "int"),
-    (r"(?:(?:at|to|temperature(?:\s+(?:at|to))?)\s+)?(?P<value>\d+)\s*(?:degrees?(?:\s+fahrenheit)?|°\s*f?|fahrenheit|f)\b", "temperature_f", "int"),
-    (r"(?:at|to|temperature(?:\s+(?:at|to))?)\s+(?P<value>\d+)\b", "temperature_f", "int"),
+    (r"(?:(?:at|to|temperature(?:\s+(?:at|to))?)\s+)?(?P<value>\d+)\s*"
+     r"(?:degrees?(?:\s+(?:fahrenheit|f))?\b|°(?:\s*f\b)?|fahrenheit\b|f\b)", "temperature_f", "int"),
+    (r"(?:(?:at|to|temperature(?:\s+(?:at|to))?)\s+)?(?P<value>\d+)\b", "temperature_f", "int"),
     (r"(?:using\s+)?(?P<value>default|warm|cool|winter)\s+preset\b", "preset", "str"),
     (r"(?P<value>warm|cool)\b", "preset", "str"),
 ]

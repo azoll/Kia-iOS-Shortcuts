@@ -137,6 +137,29 @@ def test_bounded_dictation_and_explicit_preset_overrides(bridge, text, expected)
     factory.assert_not_called()
 
 
+@pytest.mark.parametrize("temperature", ["67 degrees with", "67°,", "67 degrees F with", "67 with"])
+@pytest.mark.parametrize("seats", ["seat vents", "seat coolers"])
+@pytest.mark.parametrize("spoken_level,level", [("one", 1), ("2", 2), ("three", 3)])
+def test_turn_car_on_at_67_with_seat_ventilation(bridge, temperature, seats, spoken_level, level):
+    client, manager, factory = bridge
+    body = {"text": f"Turn the car on {temperature} the {seats} on {spoken_level}."}
+    preview = client.post("/parse_command", headers=HEADERS, json=body)
+    assert preview.status_code == 200, preview.json
+    plan = preview.json["interpreted"]
+    assert plan["action"] == "start_climate"
+    assert plan["parameters"]["temperature_f"] == 67
+    assert plan["parameters"]["seat_ventilation"] == level
+    factory.assert_not_called()
+
+    response = client.post("/execute_command", headers=HEADERS, json=body)
+    assert response.status_code == 202, response.json
+    assert response.json["interpreted"] == plan
+    manager.start_climate.assert_called_once()
+    options = manager.start_climate.call_args.args[1]
+    assert options.set_temp == 67
+    assert options.front_left_seat == options.front_right_seat == level + 2
+
+
 @pytest.mark.parametrize('text', [
     'do not turn the car on', 'turn the car off then on', 'turn the car not on',
     "don't tell Serious to unlock", 'start the car warm if it is cold',
@@ -226,6 +249,7 @@ def test_simple_natural_commands(bridge, text, method):
     "", " ", None, 123, [], "x" * 401,
     "start my car at 90 degrees", "start my car at 20 Celsius", "start my car at 80 degrees C",
     "start my car at -80 degrees", "start my car at 80.5 degrees", "start my car for 11 minutes",
+    "turn the car on 67°C with seat vents on 2", "turn the car on 67 with seat coolers on 4",
     "start my car with seat heaters at 4", "start my car with seat heaters at 3.5",
     "start my car with seat heaters at 3 and seat ventilation at 2",
     "start my car at 70 degrees and temperature 80 degrees",
